@@ -52,11 +52,11 @@ class ReasoningExpert:
     def __init__(self):
         # Adjusted limits for cleaner demo effect
         self.limits = {
-            's2': 642.0,  
-            's3': 1580.0, 
-            's4': 1380.0, # Aggressively lowered to trigger early
-            's7': 555.0,  # Raised floor so it trips easily
-            's11': 47.2,  
+            's2': 641.0,  
+            's3': 1575.0, 
+            's4': 1360.0, # Very aggressive: base is around 1350-1400
+            's7': 556.0,  # Raised floor
+            's11': 47.0,  
         }
 
     def analyze(self, row, window_mean):
@@ -64,10 +64,10 @@ class ReasoningExpert:
         status = "HEALTHY"
         
         # 1. RUL-based Status (Ground Truth)
-        if row['rul'] < 50:
+        if row['rul'] < 75: # Increased critical range
             status = "CRITICAL"
             reasons.append("🔴 **CRITICAL**: Multiple failure signatures detected coincident with high cycle count.")
-        elif row['rul'] < 130:
+        elif row['rul'] < 175: # Increased warning range (Data often starts ~192 RUL)
             status = "WARNING"
             reasons.append("⚠️ **WARNING**: Sensors show significant drift signs.")
         else:

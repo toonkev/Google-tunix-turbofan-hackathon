@@ -70,11 +70,11 @@ class ReasoningExpert:
         # Approximate failure thresholds for key sensors in FD001 (HPC degradation)
         # Aggressively tuned for demo visibility
         self.limits = {
-            's2': 642.0,  # Compressor inlet temp
-            's3': 1580.0, # HPC outlet temp
-            's4': 1380.0, # LPT outlet temp (Lowered)
-            's7': 555.0,  # HPC outlet pressure (Raised floor)
-            's11': 47.2,  # Static pressure at HPC outlet
+            's2': 641.0,  # Compressor inlet temp
+            's3': 1575.0, # HPC outlet temp
+            's4': 1360.0, # LPT outlet temp (Lowered)
+            's7': 556.0,  # HPC outlet pressure (Raised floor)
+            's11': 47.0,  # Static pressure at HPC outlet
         }
 
     def analyze_window(self, window_df: pd.DataFrame, current_rul: int) -> str:
@@ -93,10 +93,10 @@ class ReasoningExpert:
             reasons.append(f"HPC Pressure (s7) is low ({last_row['s7']:.1f}).")
 
         # 2. synthesize conclusion
-        if current_rul < 50:
+        if current_rul < 75:
             status = "CRITICAL"
             reasons.append("Multiple failure signatures detected coincident with high cycle count.")
-        elif current_rul < 130:
+        elif current_rul < 175:
             status = "WARNING"
             reasons.append("Sensors show early drift signs.")
         else:
