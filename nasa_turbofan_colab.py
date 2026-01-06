@@ -109,10 +109,10 @@ def prepare_dataset(df):
     df = df.join(max_cycles, on='unit')
     df['rul'] = df['max_time'] - df['time']
 
-    # Normalize sensors (simplified for brevity)
-    cols_to_norm = [c for c in df.columns if c.startswith('s')]
-    df[cols_to_norm] = (df[cols_to_norm] - df[cols_to_norm].mean()) / df[cols_to_norm].std()
-
+    # Note: We do NOT normalize the data for the LLM input.
+    # 1. The ReasoningExpert relies on physical thresholds (e.g. 1420 deg).
+    # 2. Gemma (LLM) can read raw numbers ("1420") just fine.
+    
     expert = ReasoningExpert()
     examples = []
     
