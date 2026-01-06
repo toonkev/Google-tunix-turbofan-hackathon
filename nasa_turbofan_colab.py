@@ -68,12 +68,13 @@ def download_and_read_cmapss_fd001(cache_dir="/content/cmapss"):
 class ReasoningExpert:
     def __init__(self):
         # Approximate failure thresholds for key sensors in FD001 (HPC degradation)
+        # Aggressively tuned for demo visibility
         self.limits = {
-            's2': 644.0,  # Compressor inlet temp
-            's3': 1600.0, # HPC outlet temp
-            's4': 1420.0, # LPT outlet temp
-            's7': 554.0,  # HPC outlet pressure (downward trend usually bad)
-            's11': 48.0,  # Static pressure at HPC outlet
+            's2': 642.0,  # Compressor inlet temp
+            's3': 1580.0, # HPC outlet temp
+            's4': 1380.0, # LPT outlet temp (Lowered)
+            's7': 555.0,  # HPC outlet pressure (Raised floor)
+            's11': 47.2,  # Static pressure at HPC outlet
         }
 
     def analyze_window(self, window_df: pd.DataFrame, current_rul: int) -> str:
@@ -87,12 +88,15 @@ class ReasoningExpert:
         
         if last_row['s11'] > self.limits['s11']:
             reasons.append(f"Static Pressure (s11) is high ({last_row['s11']:.1f}), indicating flow restriction.")
+            
+        if last_row['s7'] < self.limits['s7']: # Dropping means pressure loss
+            reasons.append(f"HPC Pressure (s7) is low ({last_row['s7']:.1f}).")
 
         # 2. synthesize conclusion
-        if current_rul < 30:
+        if current_rul < 50:
             status = "CRITICAL"
             reasons.append("Multiple failure signatures detected coincident with high cycle count.")
-        elif current_rul < 75:
+        elif current_rul < 130:
             status = "WARNING"
             reasons.append("Sensors show early drift signs.")
         else:
