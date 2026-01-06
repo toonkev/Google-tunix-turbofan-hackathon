@@ -94,84 +94,154 @@ class ReasoningExpert:
 # ==========================================
 st.title("✈️ TurbofanReason: Explainable Predictive Maintenance")
 st.markdown("Visualizing the **Reasoning Synthesis** layer. We translate raw sensor data into engineering diagnostics.")
-st.info("💡 **Tip**: Drag the **Time Cycle** slider to the right to see the engine degrade!")
 
 df = load_data()
+expert = ReasoningExpert()
 
-# Sidebar
-units = df['unit'].unique()
-selected_unit = st.sidebar.selectbox("Select Engine Unit", units)
+# Create Tabs
+tab1, tab2 = st.tabs(["⚡ Side-by-Side Comparison", "🔍 Deep Dive Explorer"])
 
-# Filter Data
-unit_df = df[df['unit'] == selected_unit]
-max_time = int(unit_df['time'].max())
-
-# Main Layout
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.subheader("Sensor Telemetry")
-    # Plot S4, S7, S11
-    fig = px.line(unit_df, x="time", y=["s4", "s7", "s11"], title=f"Engine {selected_unit} Key Sensors")
-    # Add vertical line for current slider
-    # We need to get selected_time first, but it's defined below. 
-    # Streamlit rerun flow handles this, but let's define slider first? 
-    # Actually, let's just plot without the line for simplicity or rely on hover.
-    st.plotly_chart(fig, use_container_width=True)
-
-with col2:
-    st.subheader("Live Diagnosis")
+def get_example_by_status(df, target_status):
+    """Finds a random example matching the criteria."""
+    # We iterate a few random units to find a match
+    import random
+    units = list(df['unit'].unique())
+    random.shuffle(units)
     
-    # "Jump to Failure" button
-    if st.button("Jump to End of Life"):
-        st.session_state[f'slider_{selected_unit}'] = max_time
-    
-    # Slider with session state to allow button update
-    if f'slider_{selected_unit}' not in st.session_state:
-        st.session_state[f'slider_{selected_unit}'] = int(unit_df['time'].min())
+    for u in units:
+        u_df = df[df['unit'] == u]
+        # Check start, middle, end
+        candidate_indices = [
+            u_df.index[0], # Start (Usually Healthy)
+            u_df.index[int(len(u_df)/2)], # Middle
+            u_df.index[-1] # End (Usually Critical)
+        ]
         
-    selected_time = st.slider("Time Cycle", 
-                              min_value=int(unit_df['time'].min()), 
-                              max_value=max_time,
-                              key=f'slider_{selected_unit}')
-    
-    # Get Data for this cycle
-    current_row = unit_df[unit_df['time'] == selected_time].iloc[0]
-    
-    # Simple window for smoothing (last 5 cycles)
-    window_df = unit_df[(unit_df['time'] <= selected_time) & (unit_df['time'] > selected_time - 5)]
-    if window_df.empty:
-        window_mean = current_row
-    else:
-        window_mean = window_df.mean()
+        for idx in candidate_indices:
+            row = df.loc[idx]
+            # Quick calc window
+            win = df[(df['unit'] == u) & (df['time'] <= row['time']) & (df['time'] > row['time']-5)]
+            if win.empty: win_mean = row
+            else: win_mean = win.mean()
+            
+            _, status = expert.analyze(row, win_mean)
+            
+            if status == target_status:
+                return row, win_mean, status
+                
+    return None, None, None
 
-    # Generate Reasoning
-    expert = ReasoningExpert()
-    reasoning, status = expert.analyze(current_row, window_mean)
-
-    # Display Predictions
-    # RUL Metric
-    delta_rul = current_row['rul'] - 100 # arbitrary reference for color
-    st.metric("True RUL", f"{int(current_row['rul'])} cycles", delta=float(current_row['rul'] - max_time), delta_color="normal") # negative delta = getting closer to death
+with tab1:
+    st.markdown("### 🆚 Healthy vs Critical State")
+    if st.button("🔄 Refresh Examples"):
+        st.cache_data.clear() # Hacky way to force refresh if we cached randoms, but logic is dynamic here
+        
+    colA, colB = st.columns(2)
     
-    st.markdown("### 🧠 Generated Reasoning")
-    st.markdown(reasoning)
-    
-    # Status Badge
-    if status == "CRITICAL":
-        st.error(f"Status: {status}")
-    elif status == "WARNING":
-        st.warning(f"Status: {status}")
-    else:
-        st.success(f"Status: {status}")
+    # Healthy Example
+    with colA:
+        st.success("### ✅ HEALTHY Engine")
+        row, win, stat = get_example_by_status(df, "HEALTHY")
+        if row is not None:
+             reasoning, _ = expert.analyze(row, win)
+             st.metric("Unit", f"#{int(row['unit'])}")
+             st.metric("Cycle", f"{int(row['time'])}")
+             st.metric("RUL", f"{int(row['rul'])}", delta="Nominal")
+             st.markdown(f"**ReasoningTrace:**\n\n{reasoning}")
+             st.caption("Sensors are stable.")
+             
+    # Critical Example
+    with colB:
+        st.error("### 🔴 CRITICAL Engine")
+        # Try finding critical, if not warning
+        row, win, stat = get_example_by_status(df, "CRITICAL")
+        if row is None:
+             row, win, stat = get_example_by_status(df, "WARNING")
+             
+        if row is not None:
+             reasoning, _ = expert.analyze(row, win)
+             st.metric("Unit", f"#{int(row['unit'])}")
+             st.metric("Cycle", f"{int(row['time'])}")
+             st.metric("RUL", f"{int(row['rul'])}", delta="-Low", delta_color="inverse")
+             st.markdown(f"**ReasoningTrace:**\n\n{reasoning}")
+             # Highlight the bad sensors
+             st.dataframe(pd.DataFrame({
+                 "Sensor": ["S4 (LPT)", "S7 (HPC)", "S11 (Static)"],
+                 "Value": [f"{win['s4']:.1f}", f"{win['s7']:.1f}", f"{win['s11']:.1f}"],
+                 "Limit": [expert.limits['s4'], expert.limits['s7'], expert.limits['s11']]
+             }))
 
-    # Debug Data
-    with st.expander("Debug: Sensor Values"):
-        st.write({
-            "s4": f"{window_mean['s4']:.2f} (Limit: {expert.limits['s4']})",
-            "s7": f"{window_mean['s7']:.2f} (Limit: {expert.limits['s7']})",
-            "s11": f"{window_mean['s11']:.2f} (Limit: {expert.limits['s11']})",
-        })
+with tab2:
+    st.info("💡 **Tip**: Drag the **Time Cycle** slider to the right to see the engine degrade!")
+    # Sidebar
+    units = df['unit'].unique()
+    selected_unit = st.selectbox("Select Engine Unit for Deep Dive", units)
+
+    # Filter Data
+    unit_df = df[df['unit'] == selected_unit]
+    max_time = int(unit_df['time'].max())
+
+    # Main Layout
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        st.subheader("Sensor Telemetry")
+        # Plot S4, S7, S11
+        fig = px.line(unit_df, x="time", y=["s4", "s7", "s11"], title=f"Engine {selected_unit} Key Sensors")
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col2:
+        st.subheader("Live Diagnosis")
+        
+        # "Jump to Failure" button
+        if st.button("Jump to End of Life", key="jump_btn"):
+            st.session_state[f'slider_{selected_unit}'] = max_time
+        
+        # Slider with session state to allow button update
+        if f'slider_{selected_unit}' not in st.session_state:
+            st.session_state[f'slider_{selected_unit}'] = int(unit_df['time'].min())
+            
+        selected_time = st.slider("Time Cycle", 
+                                  min_value=int(unit_df['time'].min()), 
+                                  max_value=max_time,
+                                  key=f'slider_{selected_unit}')
+        
+        # Get Data for this cycle
+        current_row = unit_df[unit_df['time'] == selected_time].iloc[0]
+        
+        # Simple window for smoothing (last 5 cycles)
+        window_df = unit_df[(unit_df['time'] <= selected_time) & (unit_df['time'] > selected_time - 5)]
+        if window_df.empty:
+            window_mean = current_row
+        else:
+            window_mean = window_df.mean()
+
+        # Generate Reasoning
+        reasoning, status = expert.analyze(current_row, window_mean)
+
+        # Display Predictions
+        # RUL Metric
+        delta_rul = current_row['rul'] - 100 # arbitrary reference for color
+        st.metric("True RUL", f"{int(current_row['rul'])} cycles", delta=float(current_row['rul'] - max_time), delta_color="normal") # negative delta = getting closer to death
+        
+        st.markdown("### 🧠 Generated Reasoning")
+        st.markdown(reasoning)
+        
+        # Status Badge
+        if status == "CRITICAL":
+            st.error(f"Status: {status}")
+        elif status == "WARNING":
+            st.warning(f"Status: {status}")
+        else:
+            st.success(f"Status: {status}")
+
+        # Debug Data
+        with st.expander("Debug: Sensor Values"):
+            st.write({
+                "s4": f"{window_mean['s4']:.2f} (Limit: {expert.limits['s4']})",
+                "s7": f"{window_mean['s7']:.2f} (Limit: {expert.limits['s7']})",
+                "s11": f"{window_mean['s11']:.2f} (Limit: {expert.limits['s11']})",
+            })
 
 st.markdown("---")
 st.caption("Data: NASA CMAPSS FD001 | Method: Synthetic Reasoning Expert System -> Tunix LLM Training")
