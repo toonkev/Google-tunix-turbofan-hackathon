@@ -50,36 +50,43 @@ def load_data():
 
 class ReasoningExpert:
     def __init__(self):
+        # Adjusted limits for cleaner demo effect
         self.limits = {
-            's2': 644.0,  # Compressor inlet temp
-            's3': 1600.0, # HPC outlet temp
-            's4': 1420.0, # LPT outlet temp
-            's7': 554.0,  # HPC outlet pressure
-            's11': 48.0,  # Static pressure 
+            's2': 643.0,  
+            's3': 1590.0, 
+            's4': 1400.0, # Lowered slightly to show early drift
+            's7': 553.0,  
+            's11': 47.5,  
         }
 
     def analyze(self, row, window_mean):
         reasons = []
-        # Compare current/window mean to limits
-        if window_mean['s4'] > self.limits['s4']:
-            reasons.append(f"⚠️ **LPT Outlet Temp (Sensor 4)** is {window_mean['s4']:.1f}, exceeding nominal limit ({self.limits['s4']}).")
-        
-        if window_mean['s11'] > self.limits['s11']:
-            reasons.append(f"⚠️ **Static Pressure (Sensor 11)** is high ({window_mean['s11']:.1f}), indicating flow restriction.")
-            
-        if window_mean['s7'] < self.limits['s7'] - 5: # Example lower bound logic
-             reasons.append(f"⚠️ **HPC Pressure (Sensor 7)** is dropping dangerously.")
-
         status = "HEALTHY"
+        
+        # 1. RUL-based Status (Ground Truth)
         if row['rul'] < 30:
             status = "CRITICAL"
-            reasons.append("🔴 Multiple failure signatures detected coincident with high cycle count.")
+            reasons.append("🔴 **CRITICAL**: Multiple failure signatures detected coincident with high cycle count.")
         elif row['rul'] < 75:
             status = "WARNING"
-            reasons.append("TK Sensors show early drift signs.")
+            reasons.append("⚠️ **WARNING**: Sensors show drift signs.")
         else:
-            reasons.append("✅ All sensors operating within nominal bands.")
+            reasons.append("✅ **NOMINAL**: System operating within optimal bands.")
+
+        # 2. Sensor Specifics (The "Reasoning")
+        # Compare window mean (smoother) to limits
+        # S4: LPT Outlet Temp (Rising is bad)
+        if window_mean['s4'] > self.limits['s4']:
+             reasons.append(f"- **Sensor 4 (LPT Temp)**: {window_mean['s4']:.1f} > Limit {self.limits['s4']} (High Temp)")
+        
+        # S11: Static Pressure (Rising is bad in this context/model?)
+        if window_mean['s11'] > self.limits['s11']:
+            reasons.append(f"- **Sensor 11 (Static Pressure)**: {window_mean['s11']:.2f} > Limit {self.limits['s11']} (Flow Restriction)")
             
+        # S7: HPC Pressure (Dropping is bad)
+        if window_mean['s7'] < self.limits['s7']: 
+             reasons.append(f"- **Sensor 7 (HPC Press)**: {window_mean['s7']:.2f} < Limit {self.limits['s7']} (Pressure Loss)")
+
         return "  \n".join(reasons), status
 
 # ==========================================
@@ -87,6 +94,7 @@ class ReasoningExpert:
 # ==========================================
 st.title("✈️ TurbofanReason: Explainable Predictive Maintenance")
 st.markdown("Visualizing the **Reasoning Synthesis** layer. We translate raw sensor data into engineering diagnostics.")
+st.info("💡 **Tip**: Drag the **Time Cycle** slider to the right to see the engine degrade!")
 
 df = load_data()
 
@@ -96,19 +104,36 @@ selected_unit = st.sidebar.selectbox("Select Engine Unit", units)
 
 # Filter Data
 unit_df = df[df['unit'] == selected_unit]
+max_time = int(unit_df['time'].max())
 
 # Main Layout
 col1, col2 = st.columns([2, 1])
 
 with col1:
     st.subheader("Sensor Telemetry")
-    # Plot S4 and S7
+    # Plot S4, S7, S11
     fig = px.line(unit_df, x="time", y=["s4", "s7", "s11"], title=f"Engine {selected_unit} Key Sensors")
+    # Add vertical line for current slider
+    # We need to get selected_time first, but it's defined below. 
+    # Streamlit rerun flow handles this, but let's define slider first? 
+    # Actually, let's just plot without the line for simplicity or rely on hover.
     st.plotly_chart(fig, use_container_width=True)
 
 with col2:
     st.subheader("Live Diagnosis")
-    selected_time = st.slider("Time Cycle", min_value=int(unit_df['time'].min()), max_value=int(unit_df['time'].max()))
+    
+    # "Jump to Failure" button
+    if st.button("Jump to End of Life"):
+        st.session_state[f'slider_{selected_unit}'] = max_time
+    
+    # Slider with session state to allow button update
+    if f'slider_{selected_unit}' not in st.session_state:
+        st.session_state[f'slider_{selected_unit}'] = int(unit_df['time'].min())
+        
+    selected_time = st.slider("Time Cycle", 
+                              min_value=int(unit_df['time'].min()), 
+                              max_value=max_time,
+                              key=f'slider_{selected_unit}')
     
     # Get Data for this cycle
     current_row = unit_df[unit_df['time'] == selected_time].iloc[0]
@@ -124,19 +149,29 @@ with col2:
     expert = ReasoningExpert()
     reasoning, status = expert.analyze(current_row, window_mean)
 
-    # Display
-    st.metric("True RUL", f"{current_row['rul']} cycles", delta_color="inverse")
+    # Display Predictions
+    # RUL Metric
+    delta_rul = current_row['rul'] - 100 # arbitrary reference for color
+    st.metric("True RUL", f"{int(current_row['rul'])} cycles", delta=float(current_row['rul'] - max_time), delta_color="normal") # negative delta = getting closer to death
     
-    st.markdown("### 🧠 Model Reasoning Trace")
-    st.info(reasoning)
+    st.markdown("### 🧠 Generated Reasoning")
+    st.markdown(reasoning)
     
-    st.markdown("### 📋 Predicted Status")
+    # Status Badge
     if status == "CRITICAL":
         st.error(f"Status: {status}")
     elif status == "WARNING":
         st.warning(f"Status: {status}")
     else:
         st.success(f"Status: {status}")
+
+    # Debug Data
+    with st.expander("Debug: Sensor Values"):
+        st.write({
+            "s4": f"{window_mean['s4']:.2f} (Limit: {expert.limits['s4']})",
+            "s7": f"{window_mean['s7']:.2f} (Limit: {expert.limits['s7']})",
+            "s11": f"{window_mean['s11']:.2f} (Limit: {expert.limits['s11']})",
+        })
 
 st.markdown("---")
 st.caption("Data: NASA CMAPSS FD001 | Method: Synthetic Reasoning Expert System -> Tunix LLM Training")
